@@ -20,7 +20,7 @@ export default {
     try {
 
       /* =====================================
-         1. 檢查 Runtime Secrets 是否存在
+         1. Secret 測試
       ===================================== */
 
       if (url.pathname === "/ig/test") {
@@ -39,7 +39,7 @@ export default {
 
 
       /* =====================================
-         2. 真正測試 IG 登入
+         2. IG 登入測試
       ===================================== */
 
       if (url.pathname === "/ig/login-test") {
@@ -50,8 +50,6 @@ export default {
           {
             ok: true,
             message: "IG 登入成功",
-            accountId:
-              session.accountId || null,
             currentAccountId:
               session.currentAccountId || null
           },
@@ -62,69 +60,38 @@ export default {
 
 
       /* =====================================
-         3. IG 交易歷史
+         3. 取得 IG 帳戶
       ===================================== */
 
-      if (url.pathname === "/ig/transactions") {
+      if (url.pathname === "/ig/accounts") {
 
-        const session =
-          await loginIG(env);
+        const session = await loginIG(env);
 
-        const endpoint =
-          "https://api.ig.com/gateway/deal/history/transactions/ALL/2020-01-01/2099-12-31/100/1";
+        const response = await fetch(
+          "https://api.ig.com/gateway/deal/accounts",
+          {
+            method: "GET",
+            headers: igHeaders(
+              env,
+              session,
+              "1"
+            )
+          }
+        );
 
-        const igResponse =
-          await fetch(
-            endpoint,
-            {
-              method: "GET",
+        const data =
+          await parseResponse(response);
 
-              headers: {
-                "X-IG-API-KEY":
-                  env.IG_API_KEY,
-
-                "CST":
-                  session.cst,
-
-                "X-SECURITY-TOKEN":
-                  session.securityToken,
-
-                "VERSION":
-                  "2",
-
-                "Accept":
-                  "application/json"
-              }
-            }
-          );
-
-        const text =
-          await igResponse.text();
-
-        let data;
-
-        try {
-          data =
-            JSON.parse(text);
-        } catch {
-          data = {
-            raw: text
-          };
-        }
-
-        if (!igResponse.ok) {
+        if (!response.ok) {
 
           return jsonResponse(
             {
               ok: false,
-              error:
-                "取得 IG 交易紀錄失敗",
-              status:
-                igResponse.status,
-              detail:
-                data
+              error: "取得 IG 帳戶失敗",
+              status: response.status,
+              detail: data
             },
-            igResponse.status,
+            response.status,
             headers
           );
         }
@@ -132,8 +99,118 @@ export default {
         return jsonResponse(
           {
             ok: true,
+            accounts: data.accounts || data
+          },
+          200,
+          headers
+        );
+      }
+
+
+      /* =====================================
+         4. 取得 IG 交易紀錄
+      ===================================== */
+
+      if (url.pathname === "/ig/transactions") {
+
+        const session =
+          await loginIG(env);
+
+        const igUrl =
+          new URL(
+            "https://api.ig.com/gateway/deal/history/transactions"
+          );
+
+        igUrl.searchParams.set(
+          "type",
+          "ALL"
+        );
+
+        igUrl.searchParams.set(
+          "pageSize",
+          "100"
+        );
+
+        igUrl.searchParams.set(
+          "pageNumber",
+          "1"
+        );
+
+        /*
+          如果網址有：
+          ?from=2026-08-01T00:00:00
+          ?to=2026-08-29T23:59:59
+          也一起傳給 IG
+        */
+
+        const from =
+          url.searchParams.get("from");
+
+        const to =
+          url.searchParams.get("to");
+
+        if (from) {
+          igUrl.searchParams.set(
+            "from",
+            from
+          );
+        }
+
+        if (to) {
+          igUrl.searchParams.set(
+            "to",
+            to
+          );
+        }
+
+        const response =
+          await fetch(
+            igUrl.toString(),
+            {
+              method: "GET",
+              headers: igHeaders(
+                env,
+                session,
+                "2"
+              )
+            }
+          );
+
+        const data =
+          await parseResponse(
+            response
+          );
+
+        if (!response.ok) {
+
+          return jsonResponse(
+            {
+              ok: false,
+              error:
+                "取得 IG 交易紀錄失敗",
+              status:
+                response.status,
+              detail:
+                data
+            },
+            response.status,
+            headers
+          );
+        }
+
+        return jsonResponse(
+          {
+            ok: true,
+            count:
+              Array.isArray(
+                data.transactions
+              )
+              ? data.transactions.length
+              : 0,
+
             transactions:
               data.transactions || [],
+
             metadata:
               data.metadata || null
           },
@@ -144,7 +221,7 @@ export default {
 
 
       /* =====================================
-         4. 原本 AI 客觀分析
+         5. 原本 AI 客觀分析
       ===================================== */
 
       if (request.method !== "POST") {
@@ -418,20 +495,10 @@ async function loginIG(env) {
     );
 
 
-  const text =
-    await response.text();
-
-
-  let body;
-
-  try {
-    body =
-      JSON.parse(text);
-  } catch {
-    body = {
-      raw: text
-    };
-  }
+  const body =
+    await parseResponse(
+      response
+    );
 
 
   if (!response.ok) {
@@ -439,7 +506,6 @@ async function loginIG(env) {
     const errorCode =
       body?.errorCode ||
       body?.error ||
-      text ||
       "Unknown error";
 
     throw new Error(
@@ -469,7 +535,7 @@ async function loginIG(env) {
   ) {
 
     throw new Error(
-      "IG 登入成功，但沒有取得 CST 或 X-SECURITY-TOKEN"
+      "IG 登入成功，但沒有取得安全 Token"
     );
   }
 
@@ -483,7 +549,69 @@ async function loginIG(env) {
 
 
 /* =====================================
-   JSON 回傳
+   IG Request Headers
+===================================== */
+
+function igHeaders(
+  env,
+  session,
+  version
+) {
+
+  return {
+    "X-IG-API-KEY":
+      env.IG_API_KEY,
+
+    "CST":
+      session.cst,
+
+    "X-SECURITY-TOKEN":
+      session.securityToken,
+
+    "VERSION":
+      version,
+
+    "Accept":
+      "application/json"
+  };
+}
+
+
+/* =====================================
+   Parse Response
+===================================== */
+
+async function parseResponse(
+  response
+) {
+
+  const text =
+    await response.text();
+
+
+  if (!text) {
+    return {};
+  }
+
+
+  try {
+
+    return JSON.parse(
+      text
+    );
+
+  } catch {
+
+    return {
+      raw: text
+    };
+
+  }
+}
+
+
+/* =====================================
+   JSON Response
 ===================================== */
 
 function jsonResponse(
