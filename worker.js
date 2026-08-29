@@ -1,6 +1,5 @@
 export default {
   async fetch(request, env) {
-
     const url = new URL(request.url);
 
     const headers = {
@@ -18,13 +17,7 @@ export default {
     }
 
     try {
-
-      /* =====================================
-         1. Secret 測試
-      ===================================== */
-
       if (url.pathname === "/ig/test") {
-
         return jsonResponse(
           {
             ok: true,
@@ -37,53 +30,40 @@ export default {
         );
       }
 
-
-      /* =====================================
-         2. IG 登入測試
-      ===================================== */
-
       if (url.pathname === "/ig/login-test") {
-
         const session = await loginIG(env);
 
         return jsonResponse(
           {
             ok: true,
             message: "IG 登入成功",
-            currentAccountId:
-              session.currentAccountId || null
+            currentAccountId: session.currentAccountId || null
           },
           200,
           headers
         );
       }
 
-
-      /* =====================================
-         3. 取得 IG 帳戶
-      ===================================== */
-
       if (url.pathname === "/ig/accounts") {
-
         const session = await loginIG(env);
 
         const response = await fetch(
           "https://api.ig.com/gateway/deal/accounts",
           {
             method: "GET",
-            headers: igHeaders(
-              env,
-              session,
-              "1"
-            )
+            headers: {
+              "X-IG-API-KEY": env.IG_API_KEY,
+              "CST": session.cst,
+              "X-SECURITY-TOKEN": session.securityToken,
+              "VERSION": "1",
+              "Accept": "application/json"
+            }
           }
         );
 
-        const data =
-          await parseResponse(response);
+        const data = await parseResponse(response);
 
         if (!response.ok) {
-
           return jsonResponse(
             {
               ok: false,
@@ -106,92 +86,51 @@ export default {
         );
       }
 
-
-      /* =====================================
-         4. 取得 IG 交易紀錄
-      ===================================== */
-
       if (url.pathname === "/ig/transactions") {
+        const session = await loginIG(env);
 
-        const session =
-          await loginIG(env);
-
-        const igUrl =
-          new URL(
-            "https://api.ig.com/gateway/deal/history/transactions"
-          );
-
-        igUrl.searchParams.set(
-          "type",
-          "ALL"
+        const igUrl = new URL(
+          "https://api.ig.com/gateway/deal/history/transactions"
         );
 
-        igUrl.searchParams.set(
-          "pageSize",
-          "100"
-        );
+        igUrl.searchParams.set("type", "ALL");
+        igUrl.searchParams.set("pageSize", "100");
+        igUrl.searchParams.set("pageNumber", "1");
 
-        igUrl.searchParams.set(
-          "pageNumber",
-          "1"
-        );
-
-        /*
-          如果網址有：
-          ?from=2026-08-01T00:00:00
-          ?to=2026-08-29T23:59:59
-          也一起傳給 IG
-        */
-
-        const from =
-          url.searchParams.get("from");
-
-        const to =
-          url.searchParams.get("to");
+        const from = url.searchParams.get("from");
+        const to = url.searchParams.get("to");
 
         if (from) {
-          igUrl.searchParams.set(
-            "from",
-            from
-          );
+          igUrl.searchParams.set("from", from);
         }
 
         if (to) {
-          igUrl.searchParams.set(
-            "to",
-            to
-          );
+          igUrl.searchParams.set("to", to);
         }
 
-        const response =
-          await fetch(
-            igUrl.toString(),
-            {
-              method: "GET",
-              headers: igHeaders(
-                env,
-                session,
-                "2"
-              )
+        const response = await fetch(
+          igUrl.toString(),
+          {
+            method: "GET",
+            headers: {
+              "X-IG-API-KEY": env.IG_API_KEY,
+              "CST": session.cst,
+              "X-SECURITY-TOKEN": session.securityToken,
+              "VERSION": "2",
+              "Accept": "application/json"
             }
-          );
+          }
+        );
 
-        const data =
-          await parseResponse(
-            response
-          );
+        const data = await parseResponse(response);
 
         if (!response.ok) {
-
           return jsonResponse(
             {
               ok: false,
-              error:
-                "取得 IG 交易紀錄失敗",
-              status:
-                response.status,
-              detail:
-                data
+              error: "取得 IG 交易紀錄失敗",
+              status: response.status,
+              detail: data
             },
             response.status,
             headers
@@ -201,63 +140,40 @@ export default {
         return jsonResponse(
           {
             ok: true,
-            count:
-              Array.isArray(
-                data.transactions
-              )
+            count: Array.isArray(data.transactions)
               ? data.transactions.length
               : 0,
-
-            transactions:
-              data.transactions || [],
-
-            metadata:
-              data.metadata || null
+            transactions: data.transactions || [],
+            metadata: data.metadata || null
           },
           200,
           headers
         );
       }
 
-
-      /* =====================================
-         5. 原本 AI 客觀分析
-      ===================================== */
-
       if (request.method !== "POST") {
-
         return jsonResponse(
           {
             ok: false,
-            error:
-              "Only POST requests are accepted."
+            error: "Only POST requests are accepted."
           },
           405,
           headers
         );
       }
 
+      const trade = await request.json();
 
-      const trade =
-        await request.json();
-
-
-      if (
-        !trade.product ||
-        !trade.direction
-      ) {
-
+      if (!trade.product || !trade.direction) {
         return jsonResponse(
           {
             ok: false,
-            error:
-              "缺少商品名稱或交易方向"
+            error: "缺少商品名稱或交易方向"
           },
           400,
           headers
         );
       }
-
 
       const systemPrompt = `
 你是一個期貨交易客觀分析系統。
@@ -277,7 +193,6 @@ export default {
 10. 簡潔、中性、專業。
 `;
 
-
       const tradeText = `
 商品：${trade.product || "未提供"}
 方向：${trade.direction || "未提供"}
@@ -295,56 +210,43 @@ export default {
 個人紀錄：${trade.note || "未提供"}
 `;
 
-
       const schema = {
         type: "object",
-
         properties: {
-
           summary: {
             type: "string"
           },
-
           holdingTime: {
             type: "string"
           },
-
           priceChange: {
             type: "string"
           },
-
           entryAnalysis: {
             type: "string"
           },
-
           exitAnalysis: {
             type: "string"
           },
-
           riskManagement: {
             type: "string"
           },
-
           verifiedFactors: {
             type: "array",
             items: {
               type: "string"
             }
           },
-
           missingData: {
             type: "array",
             items: {
               type: "string"
             }
           },
-
           objectiveConclusion: {
             type: "string"
           }
-
         },
-
         required: [
           "summary",
           "holdingTime",
@@ -358,56 +260,33 @@ export default {
         ]
       };
 
-
-      const result =
-        await env.AI.run(
-          "@cf/meta/llama-3.1-8b-instruct-fast",
-          {
-            messages: [
-              {
-                role: "system",
-                content:
-                  systemPrompt
-              },
-              {
-                role: "user",
-                content:
-                  tradeText
-              }
-            ],
-
-            response_format: {
-              type:
-                "json_schema",
-
-              json_schema:
-                schema
+      const result = await env.AI.run(
+        "@cf/meta/llama-3.1-8b-instruct-fast",
+        {
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt
             },
+            {
+              role: "user",
+              content: tradeText
+            }
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: schema
+          },
+          max_tokens: 900,
+          temperature: 0.1
+        }
+      );
 
-            max_tokens:
-              900,
+      let analysis = result.response;
 
-            temperature:
-              0.1
-          }
-        );
-
-
-      let analysis =
-        result.response;
-
-
-      if (
-        typeof analysis ===
-        "string"
-      ) {
-
-        analysis =
-          JSON.parse(
-            analysis
-          );
+      if (typeof analysis === "string") {
+        analysis = JSON.parse(analysis);
       }
-
 
       return jsonResponse(
         {
@@ -419,14 +298,11 @@ export default {
       );
 
     } catch (error) {
-
       return jsonResponse(
         {
           ok: false,
-          error:
-            "Worker 執行失敗",
-          detail:
-            String(error)
+          error: "Worker 執行失敗",
+          detail: String(error)
         },
         500,
         headers
@@ -435,74 +311,39 @@ export default {
   }
 };
 
-
-/* =====================================
-   IG 登入
-===================================== */
-
 async function loginIG(env) {
-
   if (!env.IG_API_KEY) {
-    throw new Error(
-      "缺少 IG_API_KEY"
-    );
+    throw new Error("缺少 IG_API_KEY");
   }
 
   if (!env.IG_IDENTIFIER) {
-    throw new Error(
-      "缺少 IG_IDENTIFIER"
-    );
+    throw new Error("缺少 IG_IDENTIFIER");
   }
 
   if (!env.IG_PASSWORD) {
-    throw new Error(
-      "缺少 IG_PASSWORD"
-    );
+    throw new Error("缺少 IG_PASSWORD");
   }
 
+  const response = await fetch(
+    "https://api.ig.com/gateway/deal/session",
+    {
+      method: "POST",
+      headers: {
+        "X-IG-API-KEY": env.IG_API_KEY,
+        "VERSION": "2",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify({
+        identifier: env.IG_IDENTIFIER,
+        password: env.IG_PASSWORD
+      })
+    }
+  );
 
-  const response =
-    await fetch(
-      "https://api.ig.com/gateway/deal/session",
-      {
-        method: "POST",
-
-        headers: {
-          "X-IG-API-KEY":
-            env.IG_API_KEY,
-
-          "VERSION":
-            "2",
-
-          "Content-Type":
-            "application/json",
-
-          "Accept":
-            "application/json"
-        },
-
-        body:
-          JSON.stringify(
-            {
-              identifier:
-                env.IG_IDENTIFIER,
-
-              password:
-                env.IG_PASSWORD
-            }
-          )
-      }
-    );
-
-
-  const body =
-    await parseResponse(
-      response
-    );
-
+  const body = await parseResponse(response);
 
   if (!response.ok) {
-
     const errorCode =
       body?.errorCode ||
       body?.error ||
@@ -516,29 +357,17 @@ async function loginIG(env) {
     );
   }
 
-
   const cst =
-    response.headers.get(
-      "CST"
-    );
-
+    response.headers.get("CST");
 
   const securityToken =
-    response.headers.get(
-      "X-SECURITY-TOKEN"
-    );
+    response.headers.get("X-SECURITY-TOKEN");
 
-
-  if (
-    !cst ||
-    !securityToken
-  ) {
-
+  if (!cst || !securityToken) {
     throw new Error(
       "IG 登入成功，但沒有取得安全 Token"
     );
   }
-
 
   return {
     ...body,
@@ -547,83 +376,25 @@ async function loginIG(env) {
   };
 }
 
-
-/* =====================================
-   IG Request Headers
-===================================== */
-
-function igHeaders(
-  env,
-  session,
-  version
-) {
-
-  return {
-    "X-IG-API-KEY":
-      env.IG_API_KEY,
-
-    "CST":
-      session.cst,
-
-    "X-SECURITY-TOKEN":
-      session.securityToken,
-
-    "VERSION":
-      version,
-
-    "Accept":
-      "application/json"
-  };
-}
-
-
-/* =====================================
-   Parse Response
-===================================== */
-
-async function parseResponse(
-  response
-) {
-
-  const text =
-    await response.text();
-
+async function parseResponse(response) {
+  const text = await response.text();
 
   if (!text) {
     return {};
   }
 
-
   try {
-
-    return JSON.parse(
-      text
-    );
-
+    return JSON.parse(text);
   } catch {
-
     return {
       raw: text
     };
-
   }
 }
 
-
-/* =====================================
-   JSON Response
-===================================== */
-
-function jsonResponse(
-  data,
-  status,
-  headers
-) {
-
+function jsonResponse(data, status, headers) {
   return new Response(
-    JSON.stringify(
-      data
-    ),
+    JSON.stringify(data),
     {
       status,
       headers
